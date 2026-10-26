@@ -207,14 +207,13 @@ static void fetch_duration(struct gstplayer *player) {
 
     ok = gst_element_query_duration(player->pipeline, GST_FORMAT_TIME, &duration);
     if (ok == FALSE) {
-        if (player->is_live) {
-            player->info.info.duration_ms = INT64_MAX;
-            player->info.has_duration = true;
-            return;
-        } else {
-            LOG_ERROR("Could not fetch duration. (gst_element_query_duration)\n");
-            return;
-        }
+        // PATCH (bytehomedash): async live sources like rtspsrc are
+        // mis-detected as non-live (is_live only set on a synchronous
+        // NO_PREROLL). Treat any unknown-duration stream as unbounded so the
+        // "initialized" event still fires instead of hanging forever.
+        player->info.info.duration_ms = INT64_MAX;
+        player->info.has_duration = true;
+        return;
     }
 
     player->info.info.duration_ms = GST_TIME_AS_MSECONDS(duration);
@@ -229,16 +228,13 @@ static void fetch_seeking(struct gstplayer *player) {
     seeking_query = gst_query_new_seeking(GST_FORMAT_TIME);
     ok = gst_element_query(player->pipeline, seeking_query);
     if (ok == FALSE) {
-        if (player->is_live) {
-            player->info.info.can_seek = false;
-            player->info.info.seek_begin_ms = 0;
-            player->info.info.seek_end_ms = 0;
-            player->info.has_seeking_info = true;
-            return;
-        } else {
-            LOG_DEBUG("Could not query seeking info. (gst_element_query)\n");
-            return;
-        }
+        // PATCH (bytehomedash): see fetch_duration. Assume a
+        // non-seekable live stream when the seeking query fails.
+        player->info.info.can_seek = false;
+        player->info.info.seek_begin_ms = 0;
+        player->info.info.seek_end_ms = 0;
+        player->info.has_seeking_info = true;
+        return;
     }
 
     gst_query_parse_seeking(seeking_query, NULL, &seekable, &seek_begin, &seek_end);
@@ -959,7 +955,16 @@ static int init(struct gstplayer *player, bool force_sw_decoders) {
     flutterpi_sd_event_add_io(&busfd_event_source, fd.fd, EPOLLIN, on_bus_fd_ready, player);
 
     LOG_DEBUG("Setting state to paused...\n");
-    state_change_return = gst_element_set_state(GST_ELEMENT(pipeline), GST_STATE_PAUSED);
+    if (player->pipeline_description != NULL) {
+        // PATCH (bytehomedash): custom pipelines may contain live
+        // sources (rtspsrc) that produce no data in PAUSED, so caps never reach
+        // the appsink and "initialized" never fires -- while Dart only calls
+        // play() after initialized. Start such pipelines straight in PLAYING.
+        player->playpause_state = kPlaying;
+        state_change_return = gst_element_set_state(GST_ELEMENT(pipeline), GST_STATE_PLAYING);
+    } else {
+        state_change_return = gst_element_set_state(GST_ELEMENT(pipeline), GST_STATE_PAUSED);
+    }
     if (state_change_return == GST_STATE_CHANGE_NO_PREROLL) {
         LOG_DEBUG("Is Live!\n");
         player->is_live = true;
@@ -1228,10 +1233,21 @@ int gstplayer_set_looping(struct gstplayer *player, bool looping) {
 }
 
 int gstplayer_set_volume(struct gstplayer *player, double volume) {
-    (void) player;
-    (void) volume;
+    GstElement *element;
+
     LOG_DEBUG("gstplayer_set_volume(%f)\n", volume);
-    /// TODO: Implement
+
+    // PATCH (bytehomedash): upstream leaves this unimplemented. Set the
+    // volume on an element named "volume" (a `volume` element a custom pipeline
+    // puts in front of its audio sink); pipelines without one are left alone.
+    if (player->pipeline == NULL) {
+        return 0;
+    }
+    element = gst_bin_get_by_name(GST_BIN(player->pipeline), "volume");
+    if (element != NULL) {
+        g_object_set(G_OBJECT(element), "volume", volume, NULL);
+        gst_object_unref(element);
+    }
     return 0;
 }
 
