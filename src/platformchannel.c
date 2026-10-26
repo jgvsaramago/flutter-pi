@@ -510,7 +510,7 @@ int platch_write_value_to_buffer_json(struct json_value *value, uint8_t **pbuffe
                         break;
                     case '\"':
                         *((*pbuffer)++) = '\\';
-                        *((*pbuffer)++) = 't';
+                        *((*pbuffer)++) = '"';
                         break;
                     case '\\':
                         *((*pbuffer)++) = '\\';
