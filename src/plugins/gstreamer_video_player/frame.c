@@ -359,19 +359,31 @@ UNUSED int dup_gst_buffer_range_as_dmabuf(struct gbm_device *gbm_device, GstBuff
         return -1;
     }
 
-    bo = gbm_bo_create(gbm_device, map_info.size, 1, GBM_FORMAT_R8, GBM_BO_USE_LINEAR);
+    // PATCH (bytehomedash): upstream allocates a 1-row BO that is
+    // map_info.size pixels wide, which exceeds the GPU's max BO width for any
+    // real frame (a 1080p frame is ~3 MB) and always fails. Allocate a 2-D
+    // linear R8 BO with a fixed 4096-byte row instead; with stride == width the
+    // bytes stay contiguous, so plane offsets computed from the frame still hold.
+    const uint32_t bo_w = 4096;
+    const uint32_t bo_h = (uint32_t) ((map_info.size + bo_w - 1) / bo_w);
+    bo = gbm_bo_create(gbm_device, bo_w, bo_h, GBM_FORMAT_R8, GBM_BO_USE_LINEAR);
     if (bo == NULL) {
         LOG_ERROR("Couldn't create GBM BO to copy video frame into.\n");
         goto fail_unmap_buffer;
     }
 
     map_data = NULL;
-    map = gbm_bo_map(bo, 0, 0, map_info.size, 1, GBM_BO_TRANSFER_WRITE, &stride, &map_data);
+    map = gbm_bo_map(bo, 0, 0, bo_w, bo_h, GBM_BO_TRANSFER_WRITE, &stride, &map_data);
     if (map == NULL) {
         LOG_ERROR("Couldn't mmap GBM BO to copy video frame into it.\n");
         goto fail_destroy_bo;
     }
 
+    if (stride != bo_w) {
+        LOG_ERROR("GBM BO stride %u != width %u, frame layout would be wrong.\n", stride, bo_w);
+        gbm_bo_unmap(bo, map_data);
+        goto fail_destroy_bo;
+    }
     memcpy(map, map_info.data, map_info.size);
 
     gbm_bo_unmap(bo, map_data);
@@ -415,19 +427,31 @@ UNUSED int dup_gst_memory_as_dmabuf(struct gbm_device *gbm_device, GstMemory *me
         return -1;
     }
 
-    bo = gbm_bo_create(gbm_device, map_info.size, 1, GBM_FORMAT_R8, GBM_BO_USE_LINEAR);
+    // PATCH (bytehomedash): upstream allocates a 1-row BO that is
+    // map_info.size pixels wide, which exceeds the GPU's max BO width for any
+    // real frame (a 1080p frame is ~3 MB) and always fails. Allocate a 2-D
+    // linear R8 BO with a fixed 4096-byte row instead; with stride == width the
+    // bytes stay contiguous, so plane offsets computed from the frame still hold.
+    const uint32_t bo_w = 4096;
+    const uint32_t bo_h = (uint32_t) ((map_info.size + bo_w - 1) / bo_w);
+    bo = gbm_bo_create(gbm_device, bo_w, bo_h, GBM_FORMAT_R8, GBM_BO_USE_LINEAR);
     if (bo == NULL) {
         LOG_ERROR("Couldn't create GBM BO to copy video frame into.\n");
         goto fail_unmap_buffer;
     }
 
     map_data = NULL;
-    map = gbm_bo_map(bo, 0, 0, map_info.size, 1, GBM_BO_TRANSFER_WRITE, &stride, &map_data);
+    map = gbm_bo_map(bo, 0, 0, bo_w, bo_h, GBM_BO_TRANSFER_WRITE, &stride, &map_data);
     if (map == NULL) {
         LOG_ERROR("Couldn't mmap GBM BO to copy video frame into it.\n");
         goto fail_destroy_bo;
     }
 
+    if (stride != bo_w) {
+        LOG_ERROR("GBM BO stride %u != width %u, frame layout would be wrong.\n", stride, bo_w);
+        gbm_bo_unmap(bo, map_data);
+        goto fail_destroy_bo;
+    }
     memcpy(map, map_info.data, map_info.size);
 
     gbm_bo_unmap(bo, map_data);
