@@ -12,6 +12,7 @@ on top. One commit per change, each explaining why:
 | Add a WPE WebKit web view plugin | `src/plugins/wpe_webview.c`, `-DBUILD_WPE_WEBVIEW_PLUGIN=ON` | the kiosk's in-app browser, zero-copy GPU frames |
 | platformchannel: fix quotes in strings sent to Dart | the JSON encoder wrote `"` as `\t` | page titles and JSON-in-strings arrived garbled |
 | wpe webview: fix a crash when closing a page that's drawing | the texture is freed only after WebKit stops delivering frames | closing the browser during a video segfaulted the app |
+| wpe webview: fix a double free when closing a page | WebKit owns the view backend (destroy notify); dispose no longer destroys it again | closing the browser segfaulted the app a few seconds later |
 
 ## Build
 
