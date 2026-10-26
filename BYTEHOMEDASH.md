@@ -11,6 +11,7 @@ on top. One commit per change, each explaining why:
 | gstreamer video player: make live RTSP streams play | live sources report `initialized`, start in PLAYING, 1080p system-memory frames upload, `setVolume` works | the kiosk shows the door camera's live RTSP stream |
 | Add a WPE WebKit web view plugin | `src/plugins/wpe_webview.c`, `-DBUILD_WPE_WEBVIEW_PLUGIN=ON` | the kiosk's in-app browser, zero-copy GPU frames |
 | platformchannel: fix quotes in strings sent to Dart | the JSON encoder wrote `"` as `\t` | page titles and JSON-in-strings arrived garbled |
+| wpe webview: fix a crash when closing a page that's drawing | the texture is freed only after WebKit stops delivering frames | closing the browser during a video segfaulted the app |
 
 ## Build
 
