@@ -238,6 +238,12 @@ static void on_frame_destroy(const struct texture_frame *frame, void *userdata) 
 
 static void on_export_image(void *data, struct wpe_fdo_egl_exported_image *image) {
     struct view *v = data;
+    // Closed, but WebKit hasn't released the view yet: hand the frame
+    // straight back; the texture is being (or has been) freed.
+    if (v->closing) {
+        wpe_view_backend_exportable_fdo_egl_dispatch_release_exported_image(v->exportable, image);
+        return;
+    }
     EGLImageKHR egl_image = wpe_fdo_egl_exported_image_get_egl_image(image);
 
     eglMakeCurrent(wv.display, EGL_NO_SURFACE, EGL_NO_SURFACE, wv.context);
@@ -311,7 +317,12 @@ static gboolean create_on_wpe(gpointer data) {
     struct view *v = a->view;
     v->exportable = wpe_view_backend_exportable_fdo_egl_create(&exportable_client, v, v->width, v->height);
     v->backend = wpe_view_backend_exportable_fdo_get_view_backend(v->exportable);
-    WebKitWebViewBackend *backend = webkit_web_view_backend_new(v->backend, NULL, NULL);
+    // WebKit owns the view backend: it calls this when it releases the view,
+    // and nothing else may destroy the exportable. (Passing NULL made WebKit
+    // destroy the view backend itself, so destroying the exportable as well
+    // freed it twice: a segfault a few seconds after closing a page.)
+    WebKitWebViewBackend *backend =
+        webkit_web_view_backend_new(v->backend, (GDestroyNotify) wpe_view_backend_exportable_fdo_destroy, v->exportable);
     WebKitUserContentManager *content = webkit_user_content_manager_new();
     g_signal_connect(content, "script-message-received::bhdField", G_CALLBACK(on_field_message), v);
     webkit_user_content_manager_register_script_message_handler(content, "bhdField", NULL);
@@ -502,15 +513,15 @@ static gboolean simple_on_wpe(gpointer data) {
                 g_signal_handlers_disconnect_by_data(v->web, v);
                 g_object_unref(v->web);
                 v->web = NULL;
-                wpe_view_backend_exportable_fdo_destroy(v->exportable);
                 break;
         }
     }
     if (a->op == OP_DISPOSE) {
-        // Only now, with the exportable gone, can no on_export_image() push
-        // to the texture any more; freeing it earlier (from the platform
-        // thread, while a playing video was still delivering frames here)
-        // crashed the app in texture_push_frame.
+        // closing is set on this (the WebKit) thread, where frames arrive,
+        // so no on_export_image() pushes to the texture from here on.
+        // Freeing it earlier (from the platform thread, while a playing
+        // video was still delivering frames here) crashed the app in
+        // texture_push_frame.
         flutterpi_post_platform_task(destroy_texture_on_platform, v->texture);
     }
     free(a->text);
