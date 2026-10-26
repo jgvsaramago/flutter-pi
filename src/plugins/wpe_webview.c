@@ -476,6 +476,11 @@ struct simple_args {
 
 enum { OP_LOAD, OP_BACK, OP_FORWARD, OP_RELOAD, OP_STOP, OP_EVAL, OP_RESIZE, OP_DISPOSE };
 
+static int destroy_texture_on_platform(void *userdata) {
+    texture_destroy(userdata);
+    return 0;
+}
+
 static gboolean simple_on_wpe(gpointer data) {
     struct simple_args *a = data;
     struct view *v = a->view;
@@ -500,6 +505,13 @@ static gboolean simple_on_wpe(gpointer data) {
                 wpe_view_backend_exportable_fdo_destroy(v->exportable);
                 break;
         }
+    }
+    if (a->op == OP_DISPOSE) {
+        // Only now, with the exportable gone, can no on_export_image() push
+        // to the texture any more; freeing it earlier (from the platform
+        // thread, while a playing video was still delivering frames here)
+        // crashed the app in texture_push_frame.
+        flutterpi_post_platform_task(destroy_texture_on_platform, v->texture);
     }
     free(a->text);
     free(a);
@@ -720,7 +732,7 @@ static int on_message(char *channel, struct platch_obj *object, FlutterPlatformM
             if (wv.views[i] == v) wv.views[i] = NULL;
         }
         // The view struct stays alive: frames still in flight refer to it.
-        texture_destroy(v->texture);
+        // Its texture is freed by simple_on_wpe once WebKit has stopped.
     }
     return platch_respond_success_json(handle, &JSONNULL);
 }
